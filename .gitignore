@@ -1,0 +1,7 @@
+out/
+*.mp4
+*.wav
+*.mp3
+assets/sound.wav
+__pycache__/
+.DS_Store

@@ -1,0 +1,615 @@
+<!doctype html>
+<html lang="zh-CN" data-composition-variables='[
+  {"id":"title","type":"string","label":"片名","default":"享乐适应","group":"文案"},
+  {"id":"subtitle","type":"string","label":"副题","default":"为什么好消息只让你高兴三天","group":"文案"},
+  {"id":"mark","type":"string","label":"栏目名","default":"VIBE · 知识大赏","group":"文案"},
+  {"id":"nextLine","type":"string","label":"下一条预告","default":"下一条：为什么总觉得有人在看你","group":"文案"},
+  {"id":"bpm","type":"number","label":"BPM","default":112.35,"min":60,"max":180,"step":0.05,"group":"节奏"},
+  {"id":"endHold","type":"number","label":"片尾停留（秒）","default":1.2,"min":0,"max":10,"step":0.1,"group":"节奏"}
+]'>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=1080, height=1920">
+<title>享乐适应 · 竖屏 · 情绪机制 03</title>
+<script src="vendor/gsap.min.js"></script>
+<script src="vendor/om.js"></script>
+<style id="om-fonts">
+@font-face { font-family: "Noto Sans SC"; src: url("assets/fonts/NotoSansSC-500.woff") format("woff"); font-weight: 500; font-style: normal; }
+@font-face { font-family: "Noto Sans SC"; src: url("assets/fonts/NotoSansSC-900.woff") format("woff"); font-weight: 900; font-style: normal; }
+</style>
+<style>
+  html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #03080C; }
+  #film { position: relative; width: 100%; height: 100%; overflow: hidden; background: #03080C; }
+  #c { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
+</style>
+</head>
+<body>
+<div id="film" data-composition-id="film" data-start="0" data-width="1080" data-height="1920">
+  <audio id="om-sound" src="assets/sound.wav" data-start="0" data-duration="120.826" data-track-index="8" data-volume="1"></audio>
+  <canvas id="c" width="1080" height="1920" data-om-id="stage" data-layout-allow-overflow></canvas>
+</div>
+
+<script>
+/* 享乐适应 · 竖屏版 · 1080×1920
+   改编原则（对比闪电那条测出来的四条）：① 竖屏满画幅 ② 每 2.67s 硬切 ③ 单一主体（水面）贯穿
+   ④ 贯穿计数 HUD + 雨/颗粒/城市灯点质感 ⑤ 持续推镜。 */
+
+const W = 1080, H = 1920;
+const SX = 64, SW = W - SX * 2;
+const V = OM.vars();
+const CY = '#5EC8DA', OR = '#F09343', INK = '#F4F8F8';
+const BPM = Number(V.bpm) || 112.35;
+const BEAT = 60 / BPM;
+const FONT = '"Noto Sans SC", "PingFang SC", sans-serif';
+
+const cvs = document.getElementById('c');
+const ctx = cvs.getContext('2d');
+
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const lerp = (a, b, t) => a + (b - a) * t;
+const easeOut = (t) => 1 - Math.pow(1 - clamp(t), 3);
+const smooth = (t) => { t = clamp(t); return t * t * (3 - 2 * t); };
+const R = (i) => { const x = Math.sin(i * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
+const decay = (t, k) => Math.exp(-k * Math.max(0, t));
+const hexA = (hex, a) => {
+  const n = parseInt(String(hex).replace('#', ''), 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${clamp(a)})`;
+};
+
+function measure(str, size, weight = 900) {
+  ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.font = `${weight} ${size}px ${FONT}`;
+  const w = ctx.measureText(str).width; ctx.restore(); return w;
+}
+function text(str, x, y, size, { weight = 900, color = INK, align = 'center', alpha = 1, maxW = SW } = {}) {
+  str = str.replace(/\[\[|\]\]/g, '');
+  let s = size;
+  const w0 = measure(str, size, weight);
+  if (w0 > maxW) s = Math.floor(size * maxW / w0);
+  const w = measure(str, s, weight);
+  let cx = x;
+  if (align === 'center') cx = clamp(x, SX + w / 2, W - SX - w / 2);
+  if (align === 'right') cx = clamp(x, SX + w, W - SX);
+  if (align === 'left') cx = clamp(x, SX, W - SX - w);
+  ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalAlpha = alpha; ctx.fillStyle = color;
+  ctx.shadowColor = 'rgba(0,0,0,0.85)'; ctx.shadowBlur = 36; ctx.shadowOffsetY = 4;
+  ctx.font = `${weight} ${s}px ${FONT}`; ctx.textAlign = align; ctx.textBaseline = 'alphabetic';
+  ctx.fillText(str, cx, y); ctx.restore();
+}
+function mono(str, x, y, size, { color = CY, alpha = 1, align = 'left' } = {}) {
+  ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalAlpha = alpha; ctx.fillStyle = color;
+  ctx.font = `500 ${size}px "SF Mono", Menlo, monospace`;
+  ctx.textAlign = align; ctx.textBaseline = 'alphabetic';
+  ctx.fillText(str, x, y); ctx.restore();
+}
+function line(x1, y1, x2, y2, color, w = 2, a = 1, dashArr = null) {
+  ctx.save(); ctx.globalAlpha = a; ctx.strokeStyle = color; ctx.lineWidth = w;
+  if (dashArr) ctx.setLineDash(dashArr);
+  ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke(); ctx.restore();
+}
+
+/* ---------- 颗粒 ---------- */
+const grain = (() => {
+  const g = document.createElement('canvas'); g.width = 320; g.height = 320;
+  const c = g.getContext('2d'); const img = c.createImageData(320, 320);
+  for (let i = 0; i < img.data.length; i += 4) {
+    const v = 120 + Math.random() * 135;
+    img.data[i] = img.data[i + 1] = img.data[i + 2] = v; img.data[i + 3] = 255;
+  }
+  c.putImageData(img, 0, 0); return g;
+})();
+const grainPat = ctx.createPattern(grain, 'repeat');
+function grainLayer(t, alpha = 0.055) {
+  ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalAlpha = alpha;
+  ctx.translate(-Math.floor((t * 26) % 320), -Math.floor((t * 17) % 320));
+  ctx.fillStyle = grainPat; ctx.fillRect(0, 0, W + 320, H + 320);
+  ctx.restore();
+}
+
+/* ---------- 雨 / 尘 ---------- */
+function rain(t, { count = 260, alpha = 0.7, speed = 1 } = {}) {
+  ctx.save(); ctx.globalAlpha = alpha; ctx.strokeStyle = 'rgba(190,225,235,0.9)';
+  for (let i = 0; i < count; i++) {
+    const sp = (900 + R(i) * 900) * speed;
+    const x = (R(i + 31) * W + Math.sin(t * 0.7 + i) * 12) % W;
+    const y = ((t * sp + R(i + 7) * H * 2) % (H + 260)) - 130;
+    const len = 40 + R(i + 13) * 90;
+    ctx.lineWidth = 1 + R(i + 5) * 2;
+    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x - 6, y + len); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/* ---------- 底：夜空 + 城市灯点 + 地平线 ---------- */
+function bg(t, horizon = 1240) {
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, '#03080E'); g.addColorStop(0.42, '#0A2130');
+  g.addColorStop(0.62, '#06141D'); g.addColorStop(1, '#020A12');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  for (let i = 0; i < 70; i++) {
+    const x = R(i + 3) * W, h = 16 + R(i + 11) * 110;
+    ctx.save();
+    ctx.globalAlpha = 0.22 + R(i + 17) * 0.45;
+    ctx.fillStyle = i % 7 === 0 ? OR : '#7FB8C6';
+    ctx.fillRect(x, horizon - h, 2 + R(i + 23) * 4, 2);
+    ctx.restore();
+  }
+  line(0, horizon, W, horizon, 'rgba(140,200,215,0.18)', 2);
+}
+
+/* ---------- 水 ---------- */
+function water(y, t, { amp = 12, alpha = 1, rippleAt = W / 2, rippleT = 0 } = {}) {
+  const yAt = (x) => y + Math.sin(x * 0.006 + t * 1.6) * amp + Math.sin(x * 0.017 - t * 1.1) * amp * 0.4;
+  ctx.save(); ctx.globalAlpha = alpha;
+  const g = ctx.createLinearGradient(0, y - 60, 0, H);
+  g.addColorStop(0, 'rgba(94,200,218,0.40)');
+  g.addColorStop(0.35, 'rgba(94,200,218,0.13)');
+  g.addColorStop(1, 'rgba(4,16,26,0.04)');
+  ctx.beginPath(); ctx.moveTo(0, yAt(0));
+  for (let x = 0; x <= W; x += 8) ctx.lineTo(x, yAt(x));
+  ctx.lineTo(W, H); ctx.lineTo(0, H); ctx.closePath();
+  ctx.fillStyle = g; ctx.fill();
+  ctx.beginPath();
+  for (let x = 0; x <= W; x += 8) { const yy = yAt(x); x === 0 ? ctx.moveTo(x, yy) : ctx.lineTo(x, yy); }
+  ctx.strokeStyle = 'rgba(120,215,232,0.95)'; ctx.lineWidth = 3; ctx.stroke();
+  ctx.restore();
+  for (let i = 0; i < 90; i++) {
+    const x = R(i + 41) * W, yy = y + 16 + R(i + 53) * 300;
+    const tw = 0.25 + 0.75 * Math.abs(Math.sin(t * 3 + i * 1.7));
+    ctx.save(); ctx.globalAlpha = 0.3 * tw; ctx.fillStyle = '#CFF0F8';
+    ctx.fillRect(x, yy, 2 + R(i) * 3, 2); ctx.restore();
+  }
+  const p = clamp(rippleT);
+  if (p > 0 && p < 1) {
+    for (let k = 0; k < 4; k++) {
+      const rr = 30 + p * 620 + k * 60;
+      ctx.save(); ctx.globalAlpha = (1 - p) * (0.55 - k * 0.12);
+      ctx.strokeStyle = 'rgba(160,230,240,0.9)'; ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.ellipse(rippleAt, y, rr, rr * 0.26, 0, 0, Math.PI * 2); ctx.stroke();
+      ctx.restore();
+    }
+  }
+}
+
+
+/* 横向扫光带：长镜头里维持运动 */
+function sweepBand(x, y, w, h, t, speed, color, alpha) {
+  const bx = x + ((t * speed) % (w + 420)) - 210;
+  const g = ctx.createLinearGradient(bx - 210, 0, bx + 210, 0);
+  g.addColorStop(0, hexA(color, 0));
+  g.addColorStop(0.5, hexA(color, alpha));
+  g.addColorStop(1, hexA(color, 0));
+  ctx.save(); ctx.fillStyle = g; ctx.fillRect(x, y, w, h); ctx.restore();
+}
+
+/* ---------- HUD ---------- */
+function hud(t, n) {
+  mono(V.mark || 'VIBE · 知识大赏', SX, 182, 22, { alpha: 0.5 });
+  mono(`第 ${String(n).padStart(2, '0')} 次回放`, W - SX, 182, 24, { color: OR, alpha: 0.9, align: 'right' });
+  mono(`t = ${(t * 1000).toFixed(0)} ms`, W - SX, 216, 18, { alpha: 0.42, align: 'right' });
+  line(SX, 238, W - SX, 238, 'rgba(244,248,248,0.14)', 1);
+}
+
+/* ---------- 各种"机器" ---------- */
+const BASE_Y = 1290;
+
+function sceneTitle(u, p) {
+  bg(u); water(BASE_Y + 40, u, { amp: 9, rippleT: (u % 2.2) / 2.2 });
+  rain(u, { count: 220, alpha: 0.45 });
+  if (p.v === 0) {
+    text(V.title, W / 2, 700, 168, { alpha: easeOut(u / 0.5) });
+    text(V.subtitle, W / 2, 810, 52, { weight: 500, color: 'rgba(244,248,248,0.7)', alpha: easeOut((u - 0.35) / 0.5) });
+    mono('情绪机制 · 第 03 期', W / 2, 890, 26, { color: OR, alpha: 0.8 * easeOut((u - 0.7) / 0.4), align: 'center' });
+  } else {
+    text('好消息只值三天', W / 2, 760, 104, { alpha: 1 });
+    mono('一个反直觉的机制', W / 2, 850, 30, { alpha: 0.6, align: 'center' });
+  }
+}
+
+function sceneWater(u, p) {
+  const y0 = p.y || BASE_Y;
+  const lvl = y0 - (p.lift || 0) * (p.curve ? p.curve(u) : 1);
+  bg(u, y0 + 40);
+  water(lvl, u, { amp: p.amp || 14, rippleT: (u * 1.3 + (p.phase || 0)) % 1 });
+  rain(u, { count: 300, alpha: 0.7, speed: 1.1 });
+  if (p.base) {
+    line(SX, y0, W - SX, y0, hexA(OR, 0.7), 3, 0.9, [18, 14]);
+    mono('基线', SX, y0 - 24, 24, { color: OR, alpha: 0.8 });
+  }
+  if (p.num) {
+    text(String(Math.round(p.num(u))), SX + 6, p.numY || 980, p.numSize || 260, { align: 'left' });
+    if (p.numLabel) text(p.numLabel, SX + 16, (p.numY || 980) + 56, 46, { weight: 500, color: '#8AD2E2', alpha: 0.80, align: 'left', maxW: 380 });
+  }
+  if (p.t1) text(p.t1, W / 2, p.t1y || 600, p.t1s || 92, { alpha: easeOut(u / 0.45) });
+  if (p.t2) text(p.t2, W / 2, (p.t1y || 600) + 108, p.t2s || 56, { weight: 500, color: 'rgba(244,248,248,0.68)', alpha: easeOut((u - 0.25) / 0.45) });
+  if (p.meta) mono(p.meta, SX, 1610, 26, { alpha: 0.45 });
+}
+
+function sceneDrop(u, p) {
+  bg(u, BASE_Y + 40);
+  const t0 = 0.12;
+  const hit = clamp((u - t0) / 0.24);
+  const lvl = BASE_Y - 200 * easeOut(hit) * decay(Math.max(0, u - t0 - 0.24), 1.0);
+  water(lvl, u, { amp: 18, rippleT: (u - t0) / 2.2 });
+  rain(u, { count: 280, alpha: 0.6, speed: 1.2 });
+  if (u < t0 + 0.1) {
+    const y = lerp(420, lvl, easeOut(clamp(u / (t0 + 0.08))));
+    ctx.save(); ctx.fillStyle = OR; ctx.shadowColor = OR; ctx.shadowBlur = 60;
+    ctx.beginPath(); ctx.arc(W / 2, y, 30, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+    ctx.save(); ctx.globalAlpha = 0.5; ctx.strokeStyle = OR; ctx.lineWidth = 10;
+    ctx.beginPath(); ctx.moveTo(W / 2, y - 340); ctx.lineTo(W / 2, y - 24); ctx.stroke(); ctx.restore();
+  }
+  // 水花冠
+  const sk = clamp((u - t0) / 0.9);
+  if (sk > 0 && sk < 1) {
+    const rise = Math.sin(sk * Math.PI) * 240;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(224,246,252,0.95)'; ctx.lineWidth = 6;
+    ctx.shadowColor = '#9FE7F5'; ctx.shadowBlur = 30;
+    for (let i = 0; i < 11; i++) {
+      const dx = (i - 5) * 22;
+      const hh = rise * (0.5 + R(i + 61) * 0.9) * (1 - Math.abs(i - 5) / 7);
+      ctx.beginPath();
+      ctx.moveTo(W / 2 + dx, lvl + 10);
+      ctx.quadraticCurveTo(W / 2 + dx * 1.6, lvl + 10 - hh * 0.6, W / 2 + dx * 2.2, lvl + 10 - hh);
+      ctx.stroke();
+    }
+    ctx.restore();
+    for (let i = 0; i < 26; i++) {
+      const ang = -Math.PI / 2 + (R(i + 71) - 0.5) * 2.6;
+      const d = rise * (0.5 + R(i + 83) * 1.2);
+      const x = W / 2 + Math.cos(ang) * d * 1.5;
+      const y = lvl + 10 + Math.sin(ang) * d * 0.9 + sk * sk * 260 * (0.4 + R(i + 91));
+      ctx.save(); ctx.globalAlpha = 0.9 * (1 - sk);
+      ctx.fillStyle = '#DDF4FA';
+      ctx.beginPath(); ctx.arc(x, y, 2 + R(i + 97) * 5, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+    }
+  }
+  const sp = clamp((u - t0) / 0.6);
+  if (sp > 0 && sp < 1) {
+    ctx.save(); ctx.globalAlpha = 0.7 * (1 - sp);
+    ctx.strokeStyle = '#BFF0F8'; ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.ellipse(W / 2, lvl, 60 + sp * 520, (60 + sp * 520) * 0.24, 0, 0, Math.PI * 2); ctx.stroke();
+    ctx.restore();
+  }
+  text(p.t1 || '一个好消息砸下来', W / 2, 520, 86, { alpha: easeOut((u - 0.2) / 0.35) });
+  mono(p.t2 || '水位 +200 px', W / 2, 600, 28, { color: OR, alpha: 0.85 * easeOut((u - 0.4) / 0.35), align: 'center' });
+}
+
+function sceneCurve(u, p) {
+  bg(u, 1400);
+  const x0 = SX + 10, x1 = W - 130, yB = 1150;
+  const prog = clamp(u / (p.draw || 1.2));
+  line(x0, yB, x1, yB, 'rgba(244,248,248,0.25)', 2, 0.9, [14, 12]);
+  (p.curves || []).forEach((c, i) => {
+    const pp = clamp((u - (c.delay || 0)) / (p.draw || 1.2));
+    if (pp <= 0) return;
+    ctx.save(); ctx.strokeStyle = c.color; ctx.lineWidth = 5;
+    ctx.shadowColor = c.color; ctx.shadowBlur = 22;
+    ctx.beginPath();
+    for (let k = 0; k <= 140 * pp; k++) {
+      const q = k / 140;
+      const x = lerp(x0, x1, q);
+      const y = yB - c.peak * decay(q * (p.rate || 5), c.k) * Math.min(1, q * 16);
+      k === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    }
+    ctx.stroke(); ctx.restore();
+    const q = (u * 0.24 + i * 0.17) % 1;
+    ctx.save(); ctx.fillStyle = c.color; ctx.shadowColor = c.color; ctx.shadowBlur = 24;
+    ctx.beginPath(); ctx.arc(lerp(x0, x1, q), yB - c.peak * decay(q * (p.rate || 5), c.k) * Math.min(1, q * 16), 9, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+    if (c.label) mono(c.label, SX, 300 + i * 52, 30, { color: c.color, alpha: 0.85 });
+  });
+  sweepBand(x0, 900, x1 - x0, 460, u, 300, CY, 0.10);
+  rain(u, { count: 120, alpha: 0.3 });
+  text(p.t1, W / 2, 480, 78, { alpha: easeOut((u - 0.2) / 0.4) });
+  if (p.t2) text(p.t2, W / 2, 566, 40, { weight: 500, color: 'rgba(244,248,248,0.65)', alpha: easeOut((u - 0.5) / 0.4) });
+  if (p.meta) mono(p.meta, SX, 1610, 24, { alpha: 0.42 });
+}
+
+function sceneSpring(u, p) {
+  bg(u, 1500);
+  const topY = 420, rest = 620;
+  let len = rest;
+  if (u < 0.9) len = lerp(rest, rest + 240, smooth(u / 0.8));
+  else {
+    const tt = u - 0.9;
+    len = rest + 240 * decay(tt, 1.4) * Math.cos(tt * 7.2) + 6 * Math.sin(tt * 2.4) * decay(tt, 0.5);
+  }
+  const cx = p.cx || W / 2 - 120;
+  ctx.save();
+  ctx.strokeStyle = hexA(CY, 0.8); ctx.lineWidth = 5;
+  ctx.beginPath(); ctx.moveTo(cx, topY);
+  const n = 9 * 12;
+  for (let i = 1; i <= n; i++) {
+    const q = i / n;
+    ctx.lineTo(cx + Math.sin(q * 9 * Math.PI * 2 + u * 2) * 62, topY + q * len);
+  }
+  ctx.stroke(); ctx.restore();
+  ctx.save(); ctx.fillStyle = 'rgba(244,248,248,0.92)';
+  ctx.beginPath(); ctx.roundRect(cx - 80, topY + len, 160, 84, 12); ctx.fill(); ctx.restore();
+  mono('事件', cx, topY + len + 54, 28, { color: '#04121A', alpha: 0.85, align: 'center' });
+  line(cx + 120, topY + rest, cx + 320, topY + rest, hexA(OR, 0.55), 3, 0.8, [16, 12]);
+  mono('静止位', cx + 240, topY + rest - 18, 24, { color: OR, alpha: 0.7, align: 'center' });
+  rain(u, { count: 110, alpha: 0.28 });
+  text(p.t1, W / 2, 1520, 86, { alpha: easeOut((u - 0.3) / 0.4) });
+  if (p.t2) text(p.t2, W / 2, 1610, 42, { weight: 500, color: 'rgba(244,248,248,0.65)', alpha: easeOut((u - 0.6) / 0.4) });
+}
+
+function sceneGauge(u, p) {
+  bg(u, 1400);
+  const shift = (p.shift || 0) * easeOut((u - 0.3) / 0.9);
+  const lvl = p.y || 1200;
+  water(lvl, u, { amp: 10, rippleT: (u * 1.2) % 1 });
+  rain(u, { count: 130, alpha: 0.3 });
+  const gx = W - 110;
+  line(gx, 300 - shift, gx, 1500 - shift, 'rgba(244,248,248,0.2)', 2);
+  for (let i = 0; i <= 14; i++) {
+    const y = lerp(300 - shift, 1500 - shift, i / 14);
+    line(gx, y, gx - (i % 2 === 0 ? 26 : 12), y, 'rgba(244,248,248,0.22)', 1.5);
+  }
+  line(gx - 46, lvl, gx + 24, lvl, OR, 5, 0.95);
+  if (shift > 2) {
+    line(SX, lvl - shift, W - SX, lvl - shift, hexA(OR, 0.55), 3, 0.85, [16, 12]);
+    mono('新的期望线', SX, lvl - shift - 20, 26, { color: OR, alpha: 0.8 });
+  }
+  text(p.t1, W / 2, 620, 84, { alpha: easeOut((u - 0.2) / 0.4) });
+  if (p.t2) text(p.t2, W / 2, 706, 42, { weight: 500, color: 'rgba(244,248,248,0.65)', alpha: easeOut((u - 0.5) / 0.4) });
+}
+
+function sceneTreadmill(u, p) {
+  bg(u, 1500);
+  const beltY = 1360;
+  ctx.save();
+  ctx.fillStyle = 'rgba(8,24,32,0.92)'; ctx.fillRect(SX, beltY, W - SX * 2, 120);
+  ctx.strokeStyle = 'rgba(244,248,248,0.16)'; ctx.lineWidth = 2; ctx.strokeRect(SX, beltY, W - SX * 2, 120);
+  const off = (u * 260) % 70;
+  for (let x = SX - 70; x < W - SX; x += 70) line(x + off, beltY + 8, x + off - 20, beltY + 112, 'rgba(244,248,248,0.12)', 2);
+  ctx.restore();
+  const expectY = beltY - 300;
+  line(SX, expectY, W - SX, expectY, hexA(OR, 0.7), 3, 0.9, [18, 12]);
+  mono('期望线', SX, expectY - 20, 24, { color: OR, alpha: 0.8 });
+  water(beltY - 180, u, { amp: 6, rippleT: (u * 1.4) % 1 });
+  mono('当前水位', SX, beltY - 196, 24, { alpha: 0.6 });
+  const cx = W * 0.42, cy = beltY - 60;
+  ctx.save();
+  ctx.strokeStyle = 'rgba(244,248,248,0.8)'; ctx.lineWidth = 8; ctx.lineCap = 'round';
+  const sw = Math.sin(u * 9) * 34;
+  ctx.beginPath();
+  ctx.moveTo(cx, cy - 150); ctx.lineTo(cx, cy - 60);
+  ctx.moveTo(cx, cy - 60); ctx.lineTo(cx + sw, cy - 6);
+  ctx.moveTo(cx, cy - 60); ctx.lineTo(cx - sw, cy - 6);
+  ctx.moveTo(cx, cy - 130); ctx.lineTo(cx + 36, cy - 92 + sw * 0.4);
+  ctx.moveTo(cx, cy - 130); ctx.lineTo(cx - 36, cy - 92 - sw * 0.4);
+  ctx.stroke();
+  ctx.fillStyle = 'rgba(244,248,248,0.95)';
+  ctx.beginPath(); ctx.arc(cx, cy - 172, 18, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+  text(p.t1, W / 2, 520, 80, { alpha: easeOut((u - 0.2) / 0.4) });
+  if (p.t2) text(p.t2, W / 2, 604, 40, { weight: 500, color: 'rgba(244,248,248,0.65)', alpha: easeOut((u - 0.5) / 0.4) });
+}
+
+function sceneDose(u, p) {
+  bg(u, 1500);
+  const items = [1.0, 1.35, 1.75];
+  items.forEach((k, i) => {
+    const pp = easeOut((u - (p.delay || 0) - i * 0.5) / 0.5);
+    if (pp <= 0) return;
+    const x = SX + 130 + i * 300, h = 420 * k * pp;
+    ctx.save();
+    ctx.fillStyle = hexA(OR, 0.14 + i * 0.05);
+    ctx.fillRect(x - 100, 1300 - h, 200, h);
+    ctx.strokeStyle = hexA(OR, 0.85); ctx.lineWidth = 3;
+    ctx.strokeRect(x - 100, 1300 - h, 200, h);
+    ctx.restore();
+    mono(`×${k.toFixed(2)}`, x, 1300 - h - 24, 30, { color: OR, alpha: 0.9, align: 'center' });
+    mono(['第一份', '第二份', '第三份'][i], x, 1352, 26, { alpha: 0.55, align: 'center' });
+  });
+  line(SX, 1300, W - SX, 1300, 'rgba(244,248,248,0.28)', 3);
+  sweepBand(SX, 700, SW, 620, u, 260, OR, 0.08);
+  rain(u, { count: 100, alpha: 0.25 });
+  text(p.t1, W / 2, 560, 82, { alpha: easeOut((u - 0.2) / 0.4) });
+  if (p.t2) text(p.t2, W / 2, 646, 40, { weight: 500, color: 'rgba(244,248,248,0.65)', alpha: easeOut((u - 0.5) / 0.4) });
+}
+
+function sceneTanks(u, p) {
+  bg(u, 1500);
+  const items = [['新房', 0.78], ['新车', 0.6], ['新手机', 0.44]];
+  items.forEach(([label, hh], i) => {
+    const pp = easeOut((u - i * 0.22) / 0.5);
+    if (pp <= 0) return;
+    const x = SX + 20 + i * 330, w = 280, top = 700;
+    ctx.save(); ctx.globalAlpha = pp;
+    ctx.strokeStyle = 'rgba(244,248,248,0.22)'; ctx.lineWidth = 2;
+    ctx.strokeRect(x, top, w, 560);
+    const lvl = top + 560 - 460 * hh * (0.3 + 0.7 * decay((u - i * 0.22) * 0.9, 1.0));
+    ctx.beginPath();
+    for (let k = 0; k <= w; k += 8) {
+      const yy = lvl + Math.sin(k * 0.05 + u * 2) * 4;
+      k === 0 ? ctx.moveTo(x + k, yy) : ctx.lineTo(x + k, yy);
+    }
+    ctx.lineTo(x + w, top + 560); ctx.lineTo(x, top + 560); ctx.closePath();
+    ctx.fillStyle = hexA(CY, 0.22); ctx.fill();
+    ctx.strokeStyle = hexA(CY, 0.85); ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    for (let k = 0; k <= w; k += 8) {
+      const yy = lvl + Math.sin(k * 0.05 + u * 2) * 4;
+      k === 0 ? ctx.moveTo(x + k, yy) : ctx.lineTo(x + k, yy);
+    }
+    ctx.stroke(); ctx.restore();
+    text(label, x + w / 2, top + 640, 40, { weight: 500, color: 'rgba(244,248,248,0.75)', alpha: pp, maxW: w });
+  });
+  rain(u, { count: 110, alpha: 0.25 });
+  text(p.t1, W / 2, 560, 80, { alpha: easeOut((u - 0.15) / 0.4) });
+}
+
+function scenePipe(u, p) {
+  bg(u, 1500);
+  const py = 980;
+  line(SX, py, W - SX, py, 'rgba(244,248,248,0.16)', 26);
+  for (let i = 0; i < 16; i++) {
+    const x = SX + ((u * 340 + i * 90) % SW);
+    ctx.save(); ctx.globalAlpha = 0.55; ctx.fillStyle = CY; ctx.shadowColor = CY; ctx.shadowBlur = 14;
+    ctx.beginPath(); ctx.arc(x, py, 5, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+  }
+  const i = p.idx || 0;
+  const p2 = easeOut((u - 0.2) / 0.4);
+  if (p2 > 0) {
+    const x = SX + 150 + i * 330;
+    ctx.save(); ctx.globalAlpha = p2; ctx.strokeStyle = hexA(CY, 0.95); ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.arc(x, py, 56, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x - 76, py); ctx.lineTo(x + 76, py); ctx.stroke();
+    ctx.restore();
+    mono(`0${i + 1}`, x, py - 96, 26, { alpha: 0.5 * p2 });
+    text(p.t1, x, py + 220, 58, { alpha: p2, maxW: 300 });
+    text(p.t2, x, py + 290, 28, { weight: 500, color: 'rgba(244,248,248,0.6)', alpha: p2, maxW: 300 });
+  }
+  rain(u, { count: 100, alpha: 0.22 });
+  if (p.head) text(p.head, W / 2, 620, 60, { weight: 500, color: 'rgba(244,248,248,0.72)', alpha: easeOut(u / 0.4) });
+}
+
+function scenePunch(u, p) {
+  bg(u, BASE_Y + 60); water(BASE_Y + 80, u, { amp: 12, rippleT: (u * 1.1) % 1 });
+  rain(u, { count: 220, alpha: 0.45 });
+  text('快乐是落差', W / 2, 820, 132, { alpha: easeOut(u / 0.35) });
+  text('不是高度', W / 2, 980, 132, { color: OR, alpha: easeOut((u - 0.35) / 0.35) });
+  mono('所以别追高度，追落差', W / 2, 1080, 32, { alpha: 0.65 * easeOut((u - 0.8) / 0.4), align: 'center' });
+}
+
+function sceneEnd(u, p) {
+  bg(u, BASE_Y + 40); water(BASE_Y + 50, u, { amp: 6, rippleT: (u % 2) / 2 });
+  rain(u, { count: 160, alpha: 0.35 });
+  text(V.title, W / 2, 760, 96, { alpha: easeOut(u / 0.4) });
+  mono('EP 03 · 完整版已发布', W / 2, 850, 26, { color: CY, alpha: 0.7, align: 'center' });
+  text(V.nextLine, W / 2, 940, 40, { weight: 500, color: 'rgba(244,248,248,0.6)', alpha: easeOut((u - 0.4) / 0.4), maxW: 860 });
+  text(V.mark, W / 2, 1780, 26, { color: OR, alpha: 0.7 * easeOut((u - 0.8) / 0.4), align: 'center' });
+}
+
+/* ---------- 44 镜 / 224 拍 ---------- */
+const S = [];
+let B = 0;
+function add(fn, p, d = 7, sfx = null, hits = null) {
+  S.push({ fn, p, b: B, d, sfx, hits }); B += d;
+}
+// 标题（3.2s）
+add('title', { v: 0 }, 6, 'subdrop');
+// 钩子（5 拍 ≈ 2.7s，快）
+add('water', { v: 0, t1: '好消息', t2: '为什么只让人高兴三天', meta: '享乐适应 · 现象' }, 5, 'impact');
+add('water', { v: 0, num: (u) => Math.min(3, 1 + Math.floor(u * 1.2)), numLabel: '天之后', numY: 980, t2: '它就只是“那件事”了' }, 5, 'hit');
+add('water', { v: 0, base: true, t1: '然后它就只是', t2: '“那件事”了' }, 5, 'whoosh');
+// 怀疑（7 拍 ≈ 3.7s）
+add('water', { v: 0, base: true, t1: '不是变挑剔', t2: '是水位在自己往下退' }, 7, 'whoosh');
+add('water', { v: 0, base: true, lift: -30, t1: '回落幅度', t2: '≈ 事件强度' }, 7, 'pop');
+// 基线（7 拍 ×3）
+add('water', { v: 0, base: true, t1: '每个人有一条基线' }, 7, 'thud');
+add('water', { v: 0, base: true, t1: '好事抬起来', t2: '坏事压下去，最后都回到这条线' }, 7, 'pop');
+add('gauge', { v: 0, y: 1200, t1: '基线不会消失' }, 7, 'count');
+// 中奖 / 事故（7 拍 ×3）
+add('curve', { v: 0, t1: '两组人，一年后', t2: '都回到基线附近', meta: 'Brickman 等，1978 · 方向示意',
+  curves: [{ color: OR, peak: 330, k: 1.0, label: '中奖' }, { color: CY, peak: -260, k: 0.55, label: '事故' }] }, 7, 'count');
+add('curve', { v: 0, t1: '中奖者', t2: '一年后的幸福感和中奖前差不多',
+  curves: [{ color: OR, peak: 340, k: 1.1 }] }, 7, 'pop');
+add('curve', { v: 0, t1: '事故受害者', t2: '比预期好，但仍低于基线',
+  curves: [{ color: CY, peak: -300, k: 0.5 }] }, 7, 'pop');
+// 弹簧（7 拍 ×2）
+add('spring', { v: 0, t1: '拉得再长', t2: '也会弹回来' }, 7, 'boing');
+add('spring', { v: 0, t1: '回弹不是意外', t2: '是默认设置' }, 7, 'tick');
+// 参考点（8 + 7）
+add('gauge', { v: 0, y: 1200, shift: 180, t1: '水位没变', t2: '是刻度在往上走' }, 8, 'slide');
+add('gauge', { v: 0, y: 1200, shift: 180, t1: '你拿昨天的好', t2: '当今天的标准' }, 7, 'pop');
+// 适应速度（7 ×2）
+add('curve', { v: 0, t1: '好事适应得快', t2: '几周就淡了', meta: '示意：形状，不是精确时长',
+  curves: [{ color: OR, peak: 300, k: 2.4, label: '好消息' }] }, 7, 'whoosh');
+add('curve', { v: 0, t1: '坏事适应得慢', t2: '拖得更久',
+  curves: [{ color: CY, peak: -320, k: 0.9, label: '坏消息' }] }, 7, 'whoosh');
+// 跑步机（7 + 6）
+add('treadmill', { v: 0, t1: '跑得越快', t2: '线也抬得越快' }, 7, 'count');
+add('treadmill', { v: 0, t1: '一直在跑', t2: '位置没变' }, 6, 'tick');
+// 温柔面（8）
+add('water', { v: 0, base: true, lift: 300, curve: (u) => smooth(u / 3), t1: '它也会让痛苦退潮' }, 8, 'thud');
+// 剂量（6 ×2）
+add('dose', { v: 0, t1: '同样的快乐', t2: '要更大的剂量' }, 6, 'pop');
+add('dose', { v: 0, t1: '1.0 → 1.35 → 1.75', t2: '这就是“上瘾感”的来源' }, 6, 'pop');
+// 场景（8 + 6）
+add('tanks', { v: 0, t1: '新鲜感都有半衰期' }, 8, 'whoosh');
+add('tanks', { v: 0, t1: '房 / 车 / 手机', t2: '半年后都变成“日常”' }, 6, 'pop');
+// 对比（7 ×2）
+add('curve', { v: 0, t1: '总量一样', t2: '曲线不一样',
+  curves: [{ color: OR, peak: 320, k: 1.6, label: '一次性大奖' }] }, 7, 'count');
+add('curve', { v: 0, t1: '每周一个小惊喜', t2: '低，但持久',
+  curves: [{ color: CY, peak: 150, k: 0.4, label: '小确幸' }] }, 7, 'pop');
+// 三个阀门（6 ×4）
+add('pipe', { v: 0, idx: 0, t1: '三个阀门', t2: '把回弹调慢一点', head: '怎么做' }, 6, 'pop');
+add('pipe', { v: 0, idx: 0, t1: '记录基线', t2: '写下“平常的一天”', head: '三个阀门，把回弹调慢' }, 6, 'stamp');
+add('pipe', { v: 0, idx: 1, t1: '制造间隔', t2: '把喜欢的事拆开' }, 6, 'stamp');
+add('pipe', { v: 0, idx: 2, t1: '换变量', t2: '改场景、改路径' }, 6, 'stamp');
+// 金句 + 片尾
+add('punch', { v: 0 }, 12, 'impact');
+add('end', { v: 0 }, 7, 'riser');
+
+const TOTAL_BEATS = 224;
+const EASE = { title: sceneTitle, water: sceneWater, drop: sceneDrop, curve: sceneCurve, spring: sceneSpring,
+  gauge: sceneGauge, treadmill: sceneTreadmill, dose: sceneDose, tanks: sceneTanks, pipe: scenePipe,
+  punch: scenePunch, end: sceneEnd };
+
+const tl = gsap.timeline({ paused: true });
+OM.music({ bpm: BPM, off: true });
+S.forEach((s) => {
+  const at = s.b * BEAT;
+  tl.addLabel(`s${s.b}`, at);
+  if (s.sfx) tl.to({}, { duration: 0.01 }, OM.sfx(s.sfx, at, { gain: 0.5 }));
+  (s.hits || []).forEach(([off, name, opts]) => tl.to({}, { duration: 0.01 }, OM.sfx(name, at + off, opts || {})));
+});
+const total = TOTAL_BEATS * BEAT + Number(V.endHold || 1.2);
+tl.to({}, { duration: total }, 0);
+
+function locate(t) {
+  let shot = S[0];
+  for (const s of S) if (t >= s.b * BEAT) shot = s;
+  return shot;
+}
+function draw(t) {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  const s = locate(t);
+  const u = t - s.b * BEAT;
+  const phase = (t % BEAT) / BEAT;
+  const hit = Math.exp(-phase * 8);
+  const snap = u < 0.18 ? 1.13 - 0.13 * easeOut(u / 0.18) : 1.0;
+  const push = 1.02 + 0.06 * (u / (s.d * BEAT));
+  // 切点用"甩镜"位移代替亮闪：不刺眼，但切得动
+  const whip = u < 0.14 ? (1 - u / 0.14) * 64 : 0;
+  ctx.save();
+  ctx.translate(W / 2 - whip, H / 2 + 60);
+  ctx.scale(push * snap * (1 + 0.01 * hit), push * snap * (1 + 0.01 * hit));
+  ctx.translate(-W / 2, -H / 2 - 60);
+  EASE[s.fn](u, s.p || {});
+  ctx.restore();
+  // 切点：压暗 3 帧 + 一条细水线扫过（不用白闪，避免刺眼）
+  if (u < 0.1 && s.b > 0) {
+    const k = 1 - u / 0.1;
+    ctx.save();
+    ctx.globalAlpha = 0.55 * k;
+    ctx.fillStyle = '#01060A'; ctx.fillRect(0, 0, W, H);
+    const ly = H * 0.5 + (1 - k) * 260;
+    const g = ctx.createLinearGradient(0, ly - 90, 0, ly + 90);
+    g.addColorStop(0, 'rgba(120,215,232,0)');
+    g.addColorStop(0.5, `rgba(150,230,244,${0.5 * k})`);
+    g.addColorStop(1, 'rgba(120,215,232,0)');
+    ctx.fillStyle = g; ctx.fillRect(0, ly - 90, W, 180);
+    ctx.globalAlpha = 0.7 * k;
+    ctx.fillStyle = '#BFF0F8'; ctx.fillRect(0, ly - 1.5, W, 3);
+    ctx.restore();
+  }
+  grainLayer(t, 0.055);
+  hud(t, 1 + Math.floor(t / 2.67));
+}
+
+OM.clock(tl, (t) => draw(t), total);
+window.__timelines['film'] = tl;
+</script>
+</body>
+</html>
